@@ -1,0 +1,17 @@
+"""Memory for {{ spec.slug }} (mode: {{ spec.memory }})."""
+from __future__ import annotations
+
+{% if spec.use_short_memory %}
+from agentx.memory import ConversationMemory
+
+# Short-term, in-process rolling window of recent turns.
+session_memory = ConversationMemory(max_turns=12)
+{% endif %}
+{% if spec.use_long_memory %}
+from agentx.memory import LongTermMemory
+
+
+def long_term(session_id: str = "default") -> LongTermMemory:
+    """Persistent per-session memory (JSONL under data/memory/)."""
+    return LongTermMemory(f"data/memory/{session_id}.jsonl")
+{% endif %}

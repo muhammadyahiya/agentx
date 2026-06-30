@@ -1,0 +1,77 @@
+{% if spec.framework == 'langgraph' %}
+"""Agent definitions (LangGraph) — built dynamically from prompts.json."""
+from __future__ import annotations
+
+from agentx.frameworks import build_react_agent
+from agentx.tools import make_web_search_tool
+{% if spec.use_skills %}from agentx.skills import get_skill_registry
+{% endif %}
+from .config import MODEL, PROVIDER
+from .prompts import resolved_system_prompts
+{% if spec.use_rag %}from .rag import get_knowledge_tool
+{% endif %}
+{% if spec.use_mcp %}from .tools import get_mcp_tools
+{% endif %}
+
+
+def _build_tools():
+    tools = [make_web_search_tool()]
+{% if spec.use_rag %}
+    tools.append(get_knowledge_tool())
+{% endif %}
+{% if spec.use_mcp %}
+    tools.extend(get_mcp_tools())
+{% endif %}
+    return tools
+
+
+def build_agents():
+    """Return {name: compiled LangGraph agent} — one per entry in prompts.json."""
+    tools = _build_tools()
+{% if spec.use_skills %}
+    skills = get_skill_registry("data/skills").combined_instructions()
+{% else %}
+    skills = ""
+{% endif %}
+    agents = {}
+    for name, prompt in resolved_system_prompts().items():
+        if skills:
+            prompt = prompt + "\nApply these skills:\n" + skills
+        agents[name] = build_react_agent(
+            provider=PROVIDER, model=MODEL, tools=tools, system_prompt=prompt,
+        )
+    return agents
+{% else %}
+"""Agent + crew definitions (CrewAI) — built dynamically from prompts.json."""
+from __future__ import annotations
+
+from crewai import Task
+
+from agentx.frameworks import build_crew, build_crewai_agent
+from .config import MODEL, PROVIDER
+from .prompts import agents_meta, resolved_system_prompts
+
+
+def build_agents():
+    """Return {name: CrewAI Agent} — one per entry in prompts.json."""
+    prompts = resolved_system_prompts()
+    agents = {}
+    for name, meta in agents_meta().items():
+        agents[name] = build_crewai_agent(
+            role=meta.get("role", name),
+            goal=meta.get("goal", "Help the user accomplish their task accurately."),
+            backstory=prompts.get(name, ""),
+            provider=PROVIDER, model=MODEL,
+        )
+    return agents
+
+
+def build_project_crew(user_input: str):
+    """Assemble a sequential crew where each agent works the user's request."""
+    agents = build_agents()
+    tasks = [
+        Task(description=user_input, expected_output="A helpful, complete response.", agent=agent)
+        for agent in agents.values()
+    ]
+    return build_crew(list(agents.values()), tasks)
+{% endif %}

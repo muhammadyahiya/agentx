@@ -1,0 +1,37 @@
+"""RAG knowledge base for {{ spec.slug }}.
+
+Drop `.txt` / `.md` files into the project's `knowledge/` folder; they are
+chunked and indexed on first use. Uses Chroma when installed, else a built-in
+keyword retriever.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from agentx.rag import build_index_from_texts, make_retriever_tool
+
+_KNOWLEDGE_DIR = Path(__file__).resolve().parents[2] / "knowledge"
+_index = None
+
+
+def _load_texts() -> list[str]:
+    texts: list[str] = []
+    if _KNOWLEDGE_DIR.exists():
+        for fp in _KNOWLEDGE_DIR.glob("**/*"):
+            if fp.suffix.lower() in {".txt", ".md"}:
+                texts.append(fp.read_text(encoding="utf-8"))
+    return texts or [
+        "Placeholder knowledge base. Add .txt or .md files under the 'knowledge/' folder."
+    ]
+
+
+def get_index():
+    global _index
+    if _index is None:
+        _index = build_index_from_texts(_load_texts(), persist_dir=".chroma")
+    return _index
+
+
+def get_knowledge_tool():
+    """A LangChain tool that searches the knowledge base."""
+    return make_retriever_tool(get_index())

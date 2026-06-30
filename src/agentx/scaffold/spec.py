@@ -1,0 +1,72 @@
+"""``ProjectSpec`` — the single source of truth for a generation run.
+
+Both the interactive wizard and the programmatic API produce a ``ProjectSpec``;
+the generator consumes it. Keeping this validated and standalone makes the whole
+scaffolder testable without a TTY.
+"""
+from __future__ import annotations
+
+import re
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+Framework = Literal["langgraph", "crewai"]
+MemoryMode = Literal["none", "short", "long", "both"]
+PromptStyle = Literal["default", "custom"]
+
+
+def to_snake(name: str) -> str:
+    s = re.sub(r"[^0-9a-zA-Z]+", "_", name.strip().lower()).strip("_")
+    return s or "app"
+
+
+class AgentSpec(BaseModel):
+    name: str = "assistant"
+    role: str = "Helpful Assistant"
+    goal: str = "Help the user accomplish their task accurately."
+    # Optional explicit system prompt. Blank → derived from role/goal at runtime.
+    system_prompt: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _slug(cls, v: str) -> str:
+        return to_snake(v)
+
+
+class ProjectSpec(BaseModel):
+    name: str = Field(..., description="Project name (directory + package base).")
+    framework: Framework = "langgraph"
+    provider: str = "openai"
+    model: str = ""                       # blank → provider default
+    agents: list[AgentSpec] = Field(default_factory=lambda: [AgentSpec()])
+    use_rag: bool = False
+    memory: MemoryMode = "none"
+    use_mcp: bool = False
+    use_skills: bool = False
+    prompt_style: PromptStyle = "default"
+    create_venv: bool = True
+    run_sync: bool = False
+    # When set, generated pyproject depends on agentx from this local path
+    # (editable) instead of PyPI — used for local dev/testing.
+    agentx_local_path: str | None = None
+
+    @property
+    def package(self) -> str:
+        return to_snake(self.name)
+
+    @property
+    def slug(self) -> str:
+        return re.sub(r"[^0-9a-zA-Z]+", "-", self.name.strip().lower()).strip("-") or "app"
+
+    @property
+    def needs_memory(self) -> bool:
+        return self.memory != "none"
+
+    @property
+    def use_short_memory(self) -> bool:
+        return self.memory in ("short", "both")
+
+    @property
+    def use_long_memory(self) -> bool:
+        return self.memory in ("long", "both")

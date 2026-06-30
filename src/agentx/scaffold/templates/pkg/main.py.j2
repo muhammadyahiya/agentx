@@ -1,0 +1,57 @@
+"""Entry point for {{ spec.slug }}."""
+from __future__ import annotations
+
+from dotenv import load_dotenv
+{% if spec.use_short_memory %}from .memory import session_memory
+{% endif %}
+{% if spec.framework == 'langgraph' %}
+from agentx.frameworks import run_agent
+from .agents import build_agents
+
+
+def main() -> None:
+    load_dotenv()
+    agents = build_agents()
+    agent_name, agent = next(iter(agents.items()))
+    print("🧬 {{ spec.slug }} ready. Type 'quit' to exit.\n")
+    while True:
+        try:
+            user = input("you > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if user.lower() in {"quit", "exit"}:
+            break
+        if not user:
+            continue
+{% if spec.use_short_memory %}
+        session_memory.add_user(user)
+{% endif %}
+        reply = run_agent(agent, user)
+{% if spec.use_short_memory %}
+        session_memory.add_ai(reply)
+{% endif %}
+        print(f"\n{agent_name} > {reply}\n")
+{% else %}
+from .agents import build_project_crew
+
+
+def main() -> None:
+    load_dotenv()
+    print("🧬 {{ spec.slug }} (CrewAI). Type 'quit' to exit.\n")
+    while True:
+        try:
+            user = input("you > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if user.lower() in {"quit", "exit"}:
+            break
+        if not user:
+            continue
+        crew = build_project_crew(user)
+        result = crew.kickoff()
+        print(f"\ncrew > {result}\n")
+{% endif %}
+
+
+if __name__ == "__main__":
+    main()

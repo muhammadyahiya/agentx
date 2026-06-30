@@ -1,0 +1,8 @@
+"""Provider/model configuration for {{ spec.slug }}.
+
+Override at runtime via env vars (AGENTX_PROVIDER / AGENTX_MODEL) or your .env file.
+"""
+import os
+
+PROVIDER = os.getenv("AGENTX_PROVIDER", "{{ spec.provider }}")
+MODEL = os.getenv("AGENTX_MODEL", "{{ model }}")

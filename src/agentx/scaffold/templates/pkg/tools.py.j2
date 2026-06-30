@@ -1,0 +1,16 @@
+"""MCP tools for {{ spec.slug }}.
+
+Configure servers in `mcp_servers.json` at the project root. Tools load lazily
+and degrade gracefully (returns [] if MCP isn't available).
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from agentx.tools import load_mcp_tools
+
+_CONFIG = Path(__file__).resolve().parents[2] / "mcp_servers.json"
+
+
+def get_mcp_tools():
+    return load_mcp_tools(_CONFIG)
