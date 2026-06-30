@@ -78,9 +78,9 @@ dev = ["pytest>=8.0.0", "pytest-cov>=5.0.0"]
 agentx = "agentx.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/muhammadyahiya/agentx"
-Repository = "https://github.com/muhammadyahiya/agentx"
-Issues = "https://github.com/muhammadyahiya/agentx/issues"
+Homepage = "https://github.com/muhammadyahiya/agentx-kit"
+Repository = "https://github.com/muhammadyahiya/agentx-kit"
+Issues = "https://github.com/muhammadyahiya/agentx-kit/issues"
 
 [build-system]
 requires = ["hatchling"]

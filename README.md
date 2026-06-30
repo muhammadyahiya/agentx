@@ -1,10 +1,14 @@
-# 🧬 AgentX
+# 🧬 AgentX-Kit
+
+[![PyPI](https://img.shields.io/pypi/v/agentx-kit.svg)](https://pypi.org/project/agentx-kit/)
+[![Python](https://img.shields.io/pypi/pyversions/agentx-kit.svg)](https://pypi.org/project/agentx-kit/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **A provider-agnostic agentic framework + interactive project scaffolder for LangChain & CrewAI.**
 
 Pick your LLM provider (OpenAI, Azure, OpenRouter, Anthropic, Gemini, Vertex AI,
 Bedrock, Groq, Ollama), choose your framework, agents, RAG, memory, MCP tools and
-skills — and AgentX generates a **ready-to-run project in its own `uv`
+skills — and AgentX-Kit generates a **ready-to-run project in its own `uv`
 virtual environment**.
 
 ```bash
@@ -35,13 +39,13 @@ uv pip install "agentx-kit[all]"
 
 ### From GitHub (latest, unreleased)
 ```bash
-pip install "agentx-kit[all] @ git+https://github.com/muhammadyahiya/agentx.git"
+pip install "agentx-kit[all] @ git+https://github.com/muhammadyahiya/agentx-kit.git"
 ```
 
 ### From a local clone (development)
 ```bash
-git clone https://github.com/muhammadyahiya/agentx.git
-cd agentx
+git clone https://github.com/muhammadyahiya/agentx-kit.git
+cd agentx-kit
 uv venv && uv pip install -e ".[all,dev]"   # or: pip install -e ".[all,dev]"
 pytest -q
 ```
