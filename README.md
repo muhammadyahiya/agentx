@@ -19,6 +19,53 @@ agentx new                 # interactive wizard → scaffolds a uv project
 > The PyPI distribution is **`agentx-kit`**; the import name and CLI are **`agentx`**
 > (`pip install agentx-kit` → `import agentx` / `agentx --help`).
 
+## 🚀 60-second walkthrough
+```bash
+# 1. Install
+pip install "agentx-kit[all]"
+
+# 2. See what you can target
+agentx providers                      # 9 LLM providers + the env vars each needs
+
+# 3. Scaffold a complete project from one line (no keys needed to generate)
+agentx new --yes --name my-bot \
+  --provider openai \
+  --prompt "You are a support agent that answers from our docs."
+
+# 4. Run it
+cd my-bot && cp .env.example .env      # add your API key
+uv sync && uv run my-bot
+
+# 5. Tune prompts live (tokens, cost, quality, optimize) — optional UI
+pip install "agentx-kit[dashboard]" && agentx dashboard
+
+# 6. Use it from Claude / Copilot / Codex
+claude mcp add agentx-kit -- agentx mcp
+```
+Prefer guided? Just run `agentx new` (interactive wizard) or
+`agentx new --enterprise` for the full production stack
+(tracing, guardrails, FastAPI, Docker, CI, evals, caching).
+
+### 🧭 Command cheat-sheet
+| Command | What it does |
+|---|---|
+| `agentx new` | Interactive wizard → scaffold a uv project |
+| `agentx new --yes [opts]` | Non-interactive scaffold (`--enterprise` for the full pack) |
+| `agentx providers` | List LLM providers + required env vars |
+| `agentx prompt list/set/add/remove` | Manage an existing project's prompts (`-d` opens the dashboard) |
+| `agentx dashboard` | Prompt observability + optimization UI (`[dashboard]` extra) |
+| `agentx cache stats / clear` | Inspect/clear the LLM response cache |
+| `agentx mcp` | Run as an MCP server for Claude/Copilot/Codex |
+| `agentx mcp --print-config` | Print the client config for those tools |
+| `agentx version` | Show the installed version |
+
+### ▶️ Try the demos (no API keys needed)
+```bash
+bash examples/demo_local.sh     # verify local setup end-to-end
+python examples/demo_mcp.py     # test the Claude/Copilot MCP path (real handshake)
+```
+See [`examples/`](examples/) for details.
+
 ## 📦 Installation
 
 ### From PyPI (recommended)
