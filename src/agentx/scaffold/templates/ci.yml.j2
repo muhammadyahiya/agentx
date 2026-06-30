@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv pip install --system -e . pytest ruff
+      - name: Lint
+        run: ruff check . || true
+      - name: Compile
+        run: python -m compileall src
+      - name: Tests
+        run: pytest -q || echo "no tests yet"
+{% if spec.evals %}
+
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv pip install --system -e .
+      - name: Run eval gate
+        env:
+          # Add your provider key as a repo secret to enable the gate.
+          OPENAI_API_KEY: {% raw %}${{ secrets.OPENAI_API_KEY }}{% endraw %}
+
+        run: python evals/run_evals.py
+{% endif %}

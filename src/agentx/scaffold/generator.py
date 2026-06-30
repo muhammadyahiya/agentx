@@ -49,9 +49,14 @@ def _extras(spec: ProjectSpec) -> list[str]:
         extras.add("rag")
     if spec.use_mcp:
         extras.add("mcp")
+    if spec.observability:
+        extras.add("observability")
+    if spec.serve:
+        extras.add("server")
     # Deterministic order for reproducible pyproject output.
     order = ["langgraph", "crewai", "openai", "azure", "openrouter", "anthropic",
-             "google", "vertex", "bedrock", "groq", "ollama", "rag", "mcp"]
+             "google", "vertex", "bedrock", "groq", "ollama", "rag", "mcp",
+             "observability", "server"]
     return [e for e in order if e in extras]
 
 
@@ -89,7 +94,53 @@ def _conditional_files(spec: ProjectSpec) -> list[tuple[str, str]]:
         plan.append(("mcp_servers.json.j2", "mcp_servers.json"))
     if spec.use_skills:
         plan.append(("skills_seed.json.j2", "data/skills/star-method.json"))
+    if spec.observability:
+        plan.append(("pkg/observability.py.j2", "src/{pkg}/observability.py"))
+    if spec.guardrails:
+        plan.append(("pkg/guardrails.py.j2", "src/{pkg}/guardrails.py"))
+    if spec.serve:
+        plan.append(("pkg/server.py.j2", "src/{pkg}/server.py"))
+    if spec.docker:
+        plan.append(("Dockerfile.j2", "Dockerfile"))
+        plan.append(("docker-compose.yml.j2", "docker-compose.yml"))
+        plan.append(("dockerignore.j2", ".dockerignore"))
+    if spec.ci:
+        plan.append(("ci.yml.j2", ".github/workflows/ci.yml"))
+    if spec.evals:
+        plan.append(("evals/run_evals.py.j2", "evals/run_evals.py"))
+        plan.append(("evals/dataset.json.j2", "evals/dataset.json"))
     return plan
+
+
+def _write_manifest(target: Path, spec: ProjectSpec) -> Path:
+    """Write agentx.json — a declarative summary of the generated project."""
+    import json
+
+    manifest = {
+        "name": spec.slug,
+        "framework": spec.framework,
+        "provider": spec.provider,
+        "model": spec.model or get_spec(spec.provider).default_model,
+        "python_version": ">=3.10,<3.14",
+        "agents": [a.name for a in spec.agents],
+        "features": {
+            "rag": spec.use_rag,
+            "memory": spec.memory,
+            "mcp": spec.use_mcp,
+            "skills": spec.use_skills,
+            "observability": spec.observability,
+            "guardrails": spec.guardrails,
+            "serve": spec.serve,
+            "docker": spec.docker,
+            "ci": spec.ci,
+            "evals": spec.evals,
+        },
+        "extras": _extras(spec),
+        "telemetry_opt_out": False,
+    }
+    path = target / "agentx.json"
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def generate_project(spec: ProjectSpec, target_dir: str | Path, overwrite: bool = False) -> GenerationResult:
@@ -113,6 +164,8 @@ def generate_project(spec: ProjectSpec, target_dir: str | Path, overwrite: bool 
 
     # The prompt source of truth — edited by hand or via `agentx prompt`.
     written.append(prompts_store.write_prompts(target, spec))
+    # A single declarative manifest of the project (à la langgraph.json).
+    written.append(_write_manifest(target, spec))
 
     venv_created = synced = False
     uv = shutil.which("uv")

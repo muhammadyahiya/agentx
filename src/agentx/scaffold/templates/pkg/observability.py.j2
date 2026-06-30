@@ -1,0 +1,17 @@
+"""Observability wiring for {{ spec.slug }}.
+
+OpenTelemetry GenAI tracing (+ optional Langfuse). Configure via env:
+  OTEL_EXPORTER_OTLP_ENDPOINT, LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY.
+Disable entirely with AGENTX_TELEMETRY=false.
+"""
+from __future__ import annotations
+
+from agentx.observability import get_callbacks, setup_tracing
+
+
+def init_observability(service_name: str = "{{ spec.slug }}") -> bool:
+    """Instrument tracing once at startup. Safe no-op if extras absent/disabled."""
+    return setup_tracing(service_name)
+
+
+__all__ = ["init_observability", "get_callbacks"]

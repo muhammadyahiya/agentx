@@ -1,0 +1,21 @@
+"""Guardrails for {{ spec.slug }} — input/output validation + PII redaction.
+
+Customise BANNED_WORDS or compose your own guards. For jailbreak/moderation,
+wire in Guardrails-AI or NeMo Guardrails here.
+"""
+from __future__ import annotations
+
+from agentx.guardrails import GuardResult, apply_guards, default_input_guards, default_output_guards
+
+# Words/phrases to reject in user input (case-insensitive).
+BANNED_WORDS: list[str] = []
+
+
+def guard_input(text: str) -> GuardResult:
+    """Validate + lightly sanitise user input before it reaches the model."""
+    return apply_guards(text, default_input_guards(banned=BANNED_WORDS))
+
+
+def guard_output(text: str) -> GuardResult:
+    """Redact PII and cap length on model output before returning to the user."""
+    return apply_guards(text, default_output_guards(redact=True))

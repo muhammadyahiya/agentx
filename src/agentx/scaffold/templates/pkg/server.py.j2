@@ -1,0 +1,85 @@
+"""FastAPI server for {{ spec.slug }} — REST + SSE streaming.
+
+Run:  uv run uvicorn {{ pkg }}.server:app --reload --port 8000
+Endpoints: GET /health, POST /chat, GET /chat/stream?message=...
+"""
+from __future__ import annotations
+
+import json
+
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+load_dotenv()
+{% if spec.observability %}
+from .observability import init_observability
+
+init_observability()
+{% endif %}
+{% if spec.guardrails %}
+from .guardrails import guard_input, guard_output
+{% endif %}
+{% if spec.framework == 'langgraph' %}
+from agentx.frameworks import run_agent
+from .agents import build_agents
+
+_agent_cache = None
+
+
+def _reply(message: str) -> str:
+    global _agent_cache
+    if _agent_cache is None:
+        _agent_cache = next(iter(build_agents().values()))
+    return run_agent(_agent_cache, message)
+{% else %}
+from .agents import build_project_crew
+
+
+def _reply(message: str) -> str:
+    return str(build_project_crew(message).kickoff())
+{% endif %}
+
+app = FastAPI(title="{{ spec.slug }}", version="0.1.0")
+
+
+class ChatIn(BaseModel):
+    message: str
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "service": "{{ spec.slug }}"}
+
+
+@app.post("/chat")
+def chat(body: ChatIn) -> dict:
+    message = body.message
+{% if spec.guardrails %}
+    message = guard_input(message).text
+{% endif %}
+    reply = _reply(message)
+{% if spec.guardrails %}
+    reply = guard_output(reply).text
+{% endif %}
+    return {"reply": reply}
+
+
+@app.get("/chat/stream")
+def chat_stream(message: str) -> StreamingResponse:
+    """Server-Sent Events stream of the reply (token-chunked)."""
+{% if spec.guardrails %}
+    message = guard_input(message).text
+{% endif %}
+
+    def _events():
+        reply = _reply(message)
+{% if spec.guardrails %}
+        reply = guard_output(reply).text
+{% endif %}
+        for chunk in reply.split(" "):
+            yield f"data: {json.dumps({'token': chunk + ' '})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_events(), media_type="text/event-stream")

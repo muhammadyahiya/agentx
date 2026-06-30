@@ -1,8 +1,25 @@
-"""Provider/model configuration for {{ spec.slug }}.
+"""Typed configuration for {{ spec.slug }} (12-factor, pydantic-settings).
 
-Override at runtime via env vars (AGENTX_PROVIDER / AGENTX_MODEL) or your .env file.
+Reads from environment / .env. Override at runtime, e.g. AGENTX_MODEL=gpt-4o.
 """
-import os
+from __future__ import annotations
 
-PROVIDER = os.getenv("AGENTX_PROVIDER", "{{ spec.provider }}")
-MODEL = os.getenv("AGENTX_MODEL", "{{ model }}")
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="AGENTX_", env_file=".env", extra="ignore")
+
+    provider: str = "{{ spec.provider }}"
+    model: str = "{{ model }}"
+    temperature: float = 0.3
+{% if spec.observability %}
+    telemetry: bool = True
+{% endif %}
+
+
+settings = Settings()
+
+# Convenience aliases used across the project.
+PROVIDER = settings.provider
+MODEL = settings.model

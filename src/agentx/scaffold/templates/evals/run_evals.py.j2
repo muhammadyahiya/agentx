@@ -1,0 +1,70 @@
+"""LLM-as-judge eval harness for {{ spec.slug }}.
+
+Runs each case in evals/dataset.json through the agent, scores the output with a
+judge LLM (0-1) against the case's criteria, and exits non-zero if the mean
+score is below THRESHOLD — so it can gate CI.
+
+    python evals/run_evals.py
+"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+from agentx import get_chat_model
+{% if spec.framework == 'langgraph' %}
+from agentx.frameworks import run_agent
+from {{ pkg }}.agents import build_agents
+{% else %}
+from {{ pkg }}.agents import build_project_crew
+{% endif %}
+
+THRESHOLD = 0.6
+DATASET = Path(__file__).parent / "dataset.json"
+
+JUDGE_PROMPT = (
+    "You are a strict evaluator. Given a user INPUT, the agent's OUTPUT, and the "
+    "success CRITERIA, reply with ONLY a number between 0 and 1 (one decimal) for "
+    "how well OUTPUT satisfies CRITERIA.\n\n"
+    "INPUT: {input}\nOUTPUT: {output}\nCRITERIA: {criteria}\nSCORE:"
+)
+
+
+def _agent_reply(message: str) -> str:
+{% if spec.framework == 'langgraph' %}
+    agent = next(iter(build_agents().values()))
+    return run_agent(agent, message)
+{% else %}
+    return str(build_project_crew(message).kickoff())
+{% endif %}
+
+
+def _score(judge, case: dict, output: str) -> float:
+    text = judge.invoke(
+        JUDGE_PROMPT.format(input=case["input"], output=output, criteria=case.get("criteria", ""))
+    ).content
+    match = re.search(r"(\d(?:\.\d+)?)", text or "")
+    return max(0.0, min(1.0, float(match.group(1)))) if match else 0.0
+
+
+def main() -> int:
+    load_dotenv()
+    cases = json.loads(DATASET.read_text(encoding="utf-8"))
+    judge = get_chat_model()
+    scores = []
+    for case in cases:
+        output = _agent_reply(case["input"])
+        score = _score(judge, case, output)
+        scores.append(score)
+        print(f"[{score:.1f}] {case['input'][:60]}")
+    mean = sum(scores) / len(scores) if scores else 0.0
+    print(f"\nMean score: {mean:.2f} (threshold {THRESHOLD})")
+    return 0 if mean >= THRESHOLD else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

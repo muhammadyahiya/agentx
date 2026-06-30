@@ -16,7 +16,7 @@ is enough to get started.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .providers import (  # noqa: E402
     ProviderSpec,
@@ -24,11 +24,32 @@ from .providers import (  # noqa: E402
     get_crewai_llm,
     list_providers,
 )
+from .guardrails import GuardrailError, apply_guards  # noqa: E402
+from .observability import get_callbacks, setup_tracing, telemetry_enabled  # noqa: E402
+from .reliability import (  # noqa: E402
+    UsageLimitExceeded,
+    UsageLimits,
+    UsageTracker,
+    build_resilient_chat,
+)
+from .structured import structured_model  # noqa: E402
 
 __all__ = [
     "__version__",
+    # providers
     "ProviderSpec",
     "get_chat_model",
     "get_crewai_llm",
     "list_providers",
+    # enterprise runtime
+    "setup_tracing",
+    "get_callbacks",
+    "telemetry_enabled",
+    "build_resilient_chat",
+    "UsageLimits",
+    "UsageTracker",
+    "UsageLimitExceeded",
+    "apply_guards",
+    "GuardrailError",
+    "structured_model",
 ]

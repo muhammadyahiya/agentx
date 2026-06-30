@@ -76,6 +76,13 @@ def new(
     memory: str = typer.Option("none", help="none|short|long|both (with --yes)."),
     mcp: bool = typer.Option(False, help="Include MCP tools (with --yes)."),
     skills: bool = typer.Option(False, help="Include skills registry (with --yes)."),
+    enterprise: bool = typer.Option(False, "--enterprise", help="Enable the full enterprise pack (tracing, guardrails, FastAPI, Docker, CI, evals)."),
+    observability: bool = typer.Option(False, help="OpenTelemetry/Langfuse observability (with --yes)."),
+    guardrails: bool = typer.Option(False, help="Input/output guardrails (with --yes)."),
+    serve: bool = typer.Option(False, help="FastAPI server (REST + SSE) (with --yes)."),
+    docker: bool = typer.Option(False, help="Dockerfile + docker-compose (with --yes)."),
+    ci: bool = typer.Option(False, help="GitHub Actions CI (with --yes)."),
+    evals: bool = typer.Option(False, help="LLM-as-judge eval harness (with --yes)."),
     no_venv: bool = typer.Option(False, "--no-venv", help="Do not create a .venv."),
     sync: bool = typer.Option(False, "--sync", help="Run `uv sync` after generating."),
     overwrite: bool = typer.Option(False, help="Overwrite a non-empty target directory."),
@@ -98,13 +105,19 @@ def new(
             name=name or "my-agent", framework=framework, provider=provider, model=model,
             agents=agent_specs, use_rag=rag, memory=memory, use_mcp=mcp, use_skills=skills,
             prompt_style="custom" if prompt else "default",
+            observability=observability, guardrails=guardrails, serve=serve,
+            docker=docker, ci=ci, evals=evals,
             create_venv=not no_venv, run_sync=sync,
         )
+        if enterprise:
+            spec.enable_enterprise()
     else:
         spec = run_wizard(name)
         if spec is None:
             console.print("[yellow]Cancelled.[/]")
             raise typer.Exit(1)
+        if enterprise:
+            spec.enable_enterprise()
         if no_venv:
             spec.create_venv = False
         if sync:

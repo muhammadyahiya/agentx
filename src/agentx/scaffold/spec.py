@@ -45,11 +45,24 @@ class ProjectSpec(BaseModel):
     use_mcp: bool = False
     use_skills: bool = False
     prompt_style: PromptStyle = "default"
+    # ----- enterprise features -----
+    observability: bool = False   # OpenTelemetry / Langfuse tracing wiring
+    guardrails: bool = False      # input/output guardrails module
+    serve: bool = False           # FastAPI server (REST + SSE streaming)
+    docker: bool = False          # Dockerfile + docker-compose.yml
+    ci: bool = False              # GitHub Actions (lint + test [+ eval])
+    evals: bool = False           # LLM-as-judge eval harness (+ CI gate)
     create_venv: bool = True
     run_sync: bool = False
     # When set, generated pyproject depends on agentx from this local path
     # (editable) instead of PyPI — used for local dev/testing.
     agentx_local_path: str | None = None
+
+    def enable_enterprise(self) -> "ProjectSpec":
+        """Turn on the full enterprise feature set in one call."""
+        self.observability = self.guardrails = self.serve = True
+        self.docker = self.ci = self.evals = True
+        return self
 
     @property
     def package(self) -> str:

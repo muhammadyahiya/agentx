@@ -4,6 +4,10 @@ from __future__ import annotations
 from dotenv import load_dotenv
 {% if spec.use_short_memory %}from .memory import session_memory
 {% endif %}
+{% if spec.observability %}from .observability import init_observability
+{% endif %}
+{% if spec.guardrails %}from .guardrails import guard_input, guard_output
+{% endif %}
 {% if spec.framework == 'langgraph' %}
 from agentx.frameworks import run_agent
 from .agents import build_agents
@@ -11,6 +15,9 @@ from .agents import build_agents
 
 def main() -> None:
     load_dotenv()
+{% if spec.observability %}
+    init_observability()
+{% endif %}
     agents = build_agents()
     agent_name, agent = next(iter(agents.items()))
     print("🧬 {{ spec.slug }} ready. Type 'quit' to exit.\n")
@@ -23,10 +30,16 @@ def main() -> None:
             break
         if not user:
             continue
+{% if spec.guardrails %}
+        user = guard_input(user).text
+{% endif %}
 {% if spec.use_short_memory %}
         session_memory.add_user(user)
 {% endif %}
         reply = run_agent(agent, user)
+{% if spec.guardrails %}
+        reply = guard_output(reply).text
+{% endif %}
 {% if spec.use_short_memory %}
         session_memory.add_ai(reply)
 {% endif %}
@@ -37,6 +50,9 @@ from .agents import build_project_crew
 
 def main() -> None:
     load_dotenv()
+{% if spec.observability %}
+    init_observability()
+{% endif %}
     print("🧬 {{ spec.slug }} (CrewAI). Type 'quit' to exit.\n")
     while True:
         try:
@@ -47,8 +63,14 @@ def main() -> None:
             break
         if not user:
             continue
+{% if spec.guardrails %}
+        user = guard_input(user).text
+{% endif %}
         crew = build_project_crew(user)
-        result = crew.kickoff()
+        result = str(crew.kickoff())
+{% if spec.guardrails %}
+        result = guard_output(result).text
+{% endif %}
         print(f"\ncrew > {result}\n")
 {% endif %}
 

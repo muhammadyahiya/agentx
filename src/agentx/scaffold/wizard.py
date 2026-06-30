@@ -83,6 +83,21 @@ def run_wizard(name: str | None = None) -> ProjectSpec | None:
     use_skills = questionary.confirm("Add a skills registry?", default=False).ask()
     custom_prompts = questionary.confirm("Scaffold custom prompt templates (vs defaults)?", default=False).ask()
 
+    # Enterprise pack — bundle or pick individually
+    enterprise = questionary.confirm(
+        "Enable the enterprise pack (tracing, guardrails, FastAPI, Docker, CI, evals)?",
+        default=False,
+    ).ask()
+    if enterprise:
+        observability = guardrails = serve = docker = ci = evals = True
+    else:
+        observability = questionary.confirm("  • OpenTelemetry/Langfuse observability?", default=False).ask()
+        guardrails = questionary.confirm("  • Input/output guardrails?", default=False).ask()
+        serve = questionary.confirm("  • FastAPI server (REST + SSE)?", default=False).ask()
+        docker = questionary.confirm("  • Dockerfile + docker-compose?", default=False).ask()
+        ci = questionary.confirm("  • GitHub Actions CI?", default=False).ask()
+        evals = questionary.confirm("  • LLM-as-judge eval harness?", default=False).ask()
+
     create_venv = questionary.confirm("Create a .venv with `uv` now?", default=True).ask()
     run_sync = False
     if create_venv:
@@ -99,6 +114,12 @@ def run_wizard(name: str | None = None) -> ProjectSpec | None:
         use_mcp=bool(use_mcp),
         use_skills=bool(use_skills),
         prompt_style="custom" if custom_prompts else "default",
+        observability=bool(observability),
+        guardrails=bool(guardrails),
+        serve=bool(serve),
+        docker=bool(docker),
+        ci=bool(ci),
+        evals=bool(evals),
         create_venv=bool(create_venv),
         run_sync=bool(run_sync),
     )

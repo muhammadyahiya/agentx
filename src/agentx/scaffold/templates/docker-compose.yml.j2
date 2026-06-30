@@ -1,0 +1,9 @@
+services:
+  {{ spec.slug }}:
+    build: .
+    env_file: .env
+{% if spec.serve %}
+    ports:
+      - "8000:8000"
+{% endif %}
+    restart: unless-stopped
