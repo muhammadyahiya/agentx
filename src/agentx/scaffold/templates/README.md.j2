@@ -22,22 +22,45 @@ cp .env.example .env    # then fill in your credentials
 uv run {{ spec.slug }}
 # or:
 uv run python -m {{ pkg }}.main
+{% if spec.serve %}# API server:
+uv run uvicorn {{ pkg }}.server:app --reload
+{% endif %}
 ```
+{% if spec.framework == 'langgraph' %}
+Uses LangGraph's dev server too: `uvx langgraph dev` (the compiled graph is
+`{{ pkg }}.graph:graph`).
 
-## Layout
+## Layout (LangGraph)
 ```
 src/{{ pkg }}/
-├── config.py     # provider/model selection
-├── prompts.py    # per-agent system prompts
-├── agents.py     # agent (and crew) definitions
+├── config.py     # provider/model selection (pydantic-settings)
+├── prompts.py    # loads prompts.json (edit prompts there or via `agentx prompt`)
+├── state.py      # AgentState — the typed graph state (messages + reducers)
+├── tools.py      # tool assembly (web search{% if spec.use_rag %} + knowledge base{% endif %}{% if spec.use_mcp %} + MCP{% endif %})
+├── nodes.py      # graph nodes ({% if multi_agent %}supervisor + workers{% else %}the agent model call{% endif %})
+├── graph.py      # StateGraph workflow + compiled `graph` + run_text()
 {% if spec.use_rag %}├── rag.py        # knowledge base / retriever tool
 {% endif %}
-{% if spec.needs_memory %}├── memory.py     # conversation / long-term memory
+{% if spec.needs_memory %}├── memory.py     # conversation / long-term memory helpers
 {% endif %}
-{% if spec.use_mcp %}├── tools.py      # MCP tool loading
+{% if spec.serve %}├── server.py     # FastAPI (REST + SSE)
 {% endif %}
-└── main.py       # entry point
+└── main.py       # interactive REPL
 ```
+{% else %}
+## Layout (CrewAI)
+```
+src/{{ pkg }}/
+├── config.py     # provider/model selection (pydantic-settings)
+├── prompts.py    # loads prompts.json
+├── agents.py     # CrewAI Agent definitions
+├── tasks.py      # Task definitions
+├── crew.py       # Crew assembly + run_text()
+{% if spec.serve %}├── server.py     # FastAPI (REST + SSE)
+{% endif %}
+└── main.py       # interactive REPL
+```
+{% endif %}
 {% if spec.use_rag %}
 Add `.txt`/`.md` files under `knowledge/` to populate the RAG index.
 {% endif %}

@@ -1,18 +1,16 @@
-"""Entry point for {{ spec.slug }}."""
+"""Entry point for {{ spec.slug }} — an interactive REPL over the agent graph."""
 from __future__ import annotations
 
 from dotenv import load_dotenv
-{% if spec.use_short_memory %}from .memory import session_memory
-{% endif %}
 {% if spec.observability %}from .observability import init_observability
 {% endif %}
 {% if spec.guardrails %}from .guardrails import guard_input, guard_output
 {% endif %}
 {% if spec.use_cache %}from agentx.cache import enable_caching
 {% endif %}
-{% if spec.framework == 'langgraph' %}
-from agentx.frameworks import run_agent
-from .agents import build_agents
+{% if spec.framework == 'langgraph' %}from .graph import run_text
+{% else %}from .crew import run_text
+{% endif %}
 
 
 def main() -> None:
@@ -23,8 +21,6 @@ def main() -> None:
 {% if spec.use_cache %}
     enable_caching()   # cache LLM responses → lower cost & latency
 {% endif %}
-    agents = build_agents()
-    agent_name, agent = next(iter(agents.items()))
     print("🧬 {{ spec.slug }} ready. Type 'quit' to exit.\n")
     while True:
         try:
@@ -38,49 +34,11 @@ def main() -> None:
 {% if spec.guardrails %}
         user = guard_input(user).text
 {% endif %}
-{% if spec.use_short_memory %}
-        session_memory.add_user(user)
-{% endif %}
-        reply = run_agent(agent, user)
+        reply = run_text(user)
 {% if spec.guardrails %}
         reply = guard_output(reply).text
 {% endif %}
-{% if spec.use_short_memory %}
-        session_memory.add_ai(reply)
-{% endif %}
-        print(f"\n{agent_name} > {reply}\n")
-{% else %}
-from .agents import build_project_crew
-
-
-def main() -> None:
-    load_dotenv()
-{% if spec.observability %}
-    init_observability()
-{% endif %}
-{% if spec.use_cache %}
-    enable_caching()   # cache LLM responses → lower cost & latency
-{% endif %}
-    print("🧬 {{ spec.slug }} (CrewAI). Type 'quit' to exit.\n")
-    while True:
-        try:
-            user = input("you > ").strip()
-        except (EOFError, KeyboardInterrupt):
-            break
-        if user.lower() in {"quit", "exit"}:
-            break
-        if not user:
-            continue
-{% if spec.guardrails %}
-        user = guard_input(user).text
-{% endif %}
-        crew = build_project_crew(user)
-        result = str(crew.kickoff())
-{% if spec.guardrails %}
-        result = guard_output(result).text
-{% endif %}
-        print(f"\ncrew > {result}\n")
-{% endif %}
+        print(f"\nbot > {reply}\n")
 
 
 if __name__ == "__main__":

@@ -1,16 +1,26 @@
-"""MCP tools for {{ spec.slug }}.
+"""Tool assembly for the {{ spec.slug }} graph.
 
-Configure servers in `mcp_servers.json` at the project root. Tools load lazily
-and degrade gracefully (returns [] if MCP isn't available).
+Tools are plain LangChain tools; the model binds to them and the graph's
+ToolNode executes any tool calls. Add your own tools to ``get_tools()``.
 """
 from __future__ import annotations
 
-from pathlib import Path
+from agentx.tools import make_web_search_tool
+{% if spec.use_rag %}from .rag import get_knowledge_tool
+{% endif %}
+{% if spec.use_mcp %}from pathlib import Path
 
 from agentx.tools import load_mcp_tools
+{% endif %}
 
-_CONFIG = Path(__file__).resolve().parents[2] / "mcp_servers.json"
 
-
-def get_mcp_tools():
-    return load_mcp_tools(_CONFIG)
+def get_tools() -> list:
+    """Return the tool list available to the agent(s)."""
+    tools = [make_web_search_tool()]
+{% if spec.use_rag %}
+    tools.append(get_knowledge_tool())
+{% endif %}
+{% if spec.use_mcp %}
+    tools.extend(load_mcp_tools(Path(__file__).resolve().parents[2] / "mcp_servers.json"))
+{% endif %}
+    return tools

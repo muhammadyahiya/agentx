@@ -104,7 +104,8 @@ def test_generate_crewai_enterprise(tmp_path):
     s.enable_enterprise()
     root = generate_project(s, tmp_path / "crewent", overwrite=True).target_dir
     _compile_tree(root)
-    assert "build_project_crew" in (root / "src/crew_ent/server.py").read_text()
+    assert "build_project_crew" in (root / "src/crew_ent/crew.py").read_text()
+    assert "run_text" in (root / "src/crew_ent/server.py").read_text()
 
 
 def test_non_enterprise_skips_files(tmp_path):

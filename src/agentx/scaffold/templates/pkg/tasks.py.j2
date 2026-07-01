@@ -1,0 +1,18 @@
+"""Task definitions (CrewAI) for {{ spec.slug }}."""
+from __future__ import annotations
+
+from crewai import Task
+
+
+def build_tasks(user_input: str, agents: dict) -> list:
+    """One task per agent, run sequentially by the crew. Customise freely."""
+    tasks = []
+    for name, agent in agents.items():
+        tasks.append(
+            Task(
+                description=user_input,
+                expected_output="A helpful, complete, accurate response.",
+                agent=agent,
+            )
+        )
+    return tasks

@@ -1,0 +1,69 @@
+"""LangGraph workflow for {{ spec.slug }}.
+
+Exposes a module-level compiled ``graph`` (the LangGraph convention, also picked
+up by ``langgraph dev``) and a ``run_text`` helper for CLI/server use.
+"""
+from __future__ import annotations
+
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+
+from .state import AgentState
+{% if not multi_agent %}
+from langgraph.prebuilt import ToolNode, tools_condition
+
+from .nodes import call_model
+from .tools import get_tools
+
+
+def build_graph():
+    """Build the ReAct agent graph: agent ⇄ tools, with checkpointed memory."""
+    builder = StateGraph(AgentState)
+    builder.add_node("agent", call_model)
+    builder.add_node("tools", ToolNode(get_tools()))
+
+    builder.add_edge(START, "agent")
+    # If the model asked for a tool, go run it; otherwise finish.
+    builder.add_conditional_edges("agent", tools_condition)
+    builder.add_edge("tools", "agent")
+
+    return builder.compile(checkpointer=MemorySaver())
+{% else %}
+from .nodes import WORKERS, make_worker, supervisor
+from .prompts import resolved_system_prompts
+
+
+def build_graph():
+    """Build a supervisor multi-agent graph: supervisor routes to workers."""
+    builder = StateGraph(AgentState)
+    builder.add_node("supervisor", supervisor)
+    for name, system_prompt in resolved_system_prompts().items():
+        builder.add_node(name, make_worker(name, system_prompt))
+
+    builder.add_edge(START, "supervisor")
+    # Supervisor decides the next worker, or ends.
+    builder.add_conditional_edges(
+        "supervisor",
+        lambda state: state.get("next", "FINISH"),
+        {**{name: name for name in WORKERS}, "FINISH": END},
+    )
+    # Every worker reports back to the supervisor.
+    for name in WORKERS:
+        builder.add_edge(name, "supervisor")
+
+    return builder.compile(checkpointer=MemorySaver())
+{% endif %}
+
+
+# Module-level compiled graph (import this, or run `langgraph dev`).
+graph = build_graph()
+
+
+def run_text(message: str, thread_id: str = "default") -> str:
+    """Invoke the graph with one user message; return the final text reply."""
+    result = graph.invoke(
+        {"messages": [{"role": "user", "content": message}]},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    messages = result.get("messages", [])
+    return getattr(messages[-1], "content", "") if messages else ""

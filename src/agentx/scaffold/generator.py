@@ -18,8 +18,8 @@ from .spec import ProjectSpec
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-# (template, output-relative-path, include?) — output paths use {pkg} placeholder.
-_FILE_PLAN: list[tuple[str, str]] = [
+# (template, output-relative-path) — output paths use {pkg} placeholder.
+_COMMON_FILES: list[tuple[str, str]] = [
     ("pyproject.toml.j2", "pyproject.toml"),
     ("README.md.j2", "README.md"),
     ("env.example.j2", ".env.example"),
@@ -27,8 +27,22 @@ _FILE_PLAN: list[tuple[str, str]] = [
     ("pkg/__init__.py.j2", "src/{pkg}/__init__.py"),
     ("pkg/config.py.j2", "src/{pkg}/config.py"),
     ("pkg/prompts.py.j2", "src/{pkg}/prompts.py"),
-    ("pkg/agents.py.j2", "src/{pkg}/agents.py"),
     ("pkg/main.py.j2", "src/{pkg}/main.py"),
+]
+
+# A real LangGraph project: explicit state + nodes + graph + tool assembly.
+_LANGGRAPH_FILES: list[tuple[str, str]] = [
+    ("pkg/state.py.j2", "src/{pkg}/state.py"),
+    ("pkg/tools.py.j2", "src/{pkg}/tools.py"),
+    ("pkg/nodes.py.j2", "src/{pkg}/nodes.py"),
+    ("pkg/graph.py.j2", "src/{pkg}/graph.py"),
+]
+
+# A real CrewAI project: agents + tasks + crew.
+_CREWAI_FILES: list[tuple[str, str]] = [
+    ("pkg/agents.py.j2", "src/{pkg}/agents.py"),
+    ("pkg/tasks.py.j2", "src/{pkg}/tasks.py"),
+    ("pkg/crew.py.j2", "src/{pkg}/crew.py"),
 ]
 
 
@@ -70,6 +84,7 @@ def _context(spec: ProjectSpec) -> dict:
         "provider_env": list(provider_spec.env_vars),
         "extras": _extras(spec),
         "extras_str": ",".join(_extras(spec)),
+        "multi_agent": len(spec.agents) > 1,
     }
 
 
@@ -85,12 +100,13 @@ def _env() -> Environment:
 
 def _conditional_files(spec: ProjectSpec) -> list[tuple[str, str]]:
     plan: list[tuple[str, str]] = []
+    # Framework-specific core (real project structure).
+    plan += _LANGGRAPH_FILES if spec.framework == "langgraph" else _CREWAI_FILES
     if spec.use_rag:
         plan.append(("pkg/rag.py.j2", "src/{pkg}/rag.py"))
     if spec.needs_memory:
         plan.append(("pkg/memory.py.j2", "src/{pkg}/memory.py"))
     if spec.use_mcp:
-        plan.append(("pkg/tools.py.j2", "src/{pkg}/tools.py"))
         plan.append(("mcp_servers.json.j2", "mcp_servers.json"))
     if spec.use_skills:
         plan.append(("skills_seed.json.j2", "data/skills/star-method.json"))
@@ -156,7 +172,7 @@ def generate_project(spec: ProjectSpec, target_dir: str | Path, overwrite: bool 
     written: list[Path] = []
     messages: list[str] = []
 
-    for template_name, out_rel in _FILE_PLAN + _conditional_files(spec):
+    for template_name, out_rel in _COMMON_FILES + _conditional_files(spec):
         out_path = target / out_rel.format(pkg=spec.package)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         rendered = env.get_template(template_name).render(**ctx)

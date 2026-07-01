@@ -1,0 +1,76 @@
+"""Graph nodes for {{ spec.slug }}.
+
+A node is a function ``state -> partial state``. The model is built through
+AgentX's provider-agnostic factory but everything else is plain LangChain /
+LangGraph, so you fully own the graph.
+"""
+from __future__ import annotations
+
+from langchain_core.messages import AIMessage, SystemMessage
+
+from agentx import get_chat_model
+from .config import MODEL, PROVIDER
+from .prompts import resolved_system_prompts
+from .tools import get_tools
+{% if spec.use_skills %}from agentx.skills import get_skill_registry
+{% endif %}
+
+_TOOLS = get_tools()
+
+
+def _model(bind_tools: bool = True):
+    llm = get_chat_model(PROVIDER, MODEL)
+    return llm.bind_tools(_TOOLS) if bind_tools and _TOOLS else llm
+
+
+{% if spec.use_skills %}
+def _skills_suffix() -> str:
+    skills = get_skill_registry("data/skills").combined_instructions()
+    return ("\nApply these skills:\n" + skills) if skills else ""
+{% endif %}
+{% if not multi_agent %}
+_PROMPTS = resolved_system_prompts()
+_SYSTEM = next(iter(_PROMPTS.values()), "You are a helpful assistant.")
+{% if spec.use_skills %}_SYSTEM = _SYSTEM + _skills_suffix()
+{% endif %}
+
+
+def call_model(state) -> dict:
+    """Agent node: call the LLM with the system prompt + running conversation."""
+    messages = [SystemMessage(_SYSTEM)] + state["messages"]
+    response = _model().invoke(messages)
+    return {"messages": [response]}
+{% else %}
+# ---- Multi-agent (supervisor + workers) ----
+WORKERS = list(resolved_system_prompts().keys())
+
+
+def make_worker(name: str, system_prompt: str):
+    """Build a worker node that answers with its own persona."""
+{% if spec.use_skills %}    system_prompt = system_prompt + _skills_suffix()
+{% endif %}
+
+    def worker(state) -> dict:
+        messages = [SystemMessage(system_prompt)] + state["messages"]
+        response = _model().invoke(messages)
+        return {"messages": [AIMessage(content=response.content, name=name)]}
+
+    return worker
+
+
+_SUPERVISOR_SYSTEM = (
+    "You are a supervisor coordinating these workers: {workers}. "
+    "Given the conversation so far, decide who should act next to make progress. "
+    "Reply with ONLY one token: a worker name, or FINISH if the task is complete."
+)
+
+
+def supervisor(state) -> dict:
+    """Router node: pick the next worker (or FINISH)."""
+    sys = _SUPERVISOR_SYSTEM.format(workers=", ".join(WORKERS))
+    response = _model(bind_tools=False).invoke([SystemMessage(sys)] + state["messages"])
+    choice = (response.content or "FINISH").strip().split()[0].strip(".,:")
+    if choice not in WORKERS:
+        choice = "FINISH"
+    return {"next": choice}
+{% endif %}

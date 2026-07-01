@@ -74,10 +74,11 @@ def build_project_from_statement(
     # Collect a compact view for the calling LLM.
     tree = sorted(str(p.relative_to(root)) for p in root.glob("**/*") if p.is_file())
     pkg = spec.package
-    key_paths = [
-        "pyproject.toml", "prompts.json", "agentx.json",
-        f"src/{pkg}/main.py", f"src/{pkg}/agents.py", f"src/{pkg}/prompts.py",
-    ]
+    key_paths = ["pyproject.toml", "prompts.json", "agentx.json", f"src/{pkg}/main.py"]
+    if spec.framework == "langgraph":
+        key_paths += [f"src/{pkg}/graph.py", f"src/{pkg}/state.py", f"src/{pkg}/nodes.py"]
+    else:
+        key_paths += [f"src/{pkg}/crew.py", f"src/{pkg}/agents.py", f"src/{pkg}/tasks.py"]
     if spec.serve:
         key_paths.append(f"src/{pkg}/server.py")
     key_files = {}

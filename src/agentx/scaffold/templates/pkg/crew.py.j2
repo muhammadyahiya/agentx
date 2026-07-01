@@ -1,0 +1,18 @@
+"""Crew assembly (CrewAI) for {{ spec.slug }}."""
+from __future__ import annotations
+
+from agentx.frameworks import build_crew
+from .agents import build_agents
+from .tasks import build_tasks
+
+
+def build_project_crew(user_input: str):
+    """Assemble a sequential crew of all agents for the user's request."""
+    agents = build_agents()
+    tasks = build_tasks(user_input, agents)
+    return build_crew(list(agents.values()), tasks)
+
+
+def run_text(message: str) -> str:
+    """Run the crew on a message and return the final text (used by main/server)."""
+    return str(build_project_crew(message).kickoff())

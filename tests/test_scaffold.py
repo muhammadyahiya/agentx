@@ -44,16 +44,23 @@ def test_generate_langgraph_full(tmp_path):
     )
     result = generate_project(s, tmp_path / "lg", overwrite=True)
     root = result.target_dir
-    # Core + conditional files exist.
+    # Core + conditional files exist — real LangGraph structure.
     assert (root / "pyproject.toml").exists()
     assert (root / "src/lg_bot/main.py").exists()
-    assert (root / "src/lg_bot/agents.py").exists()
+    assert (root / "src/lg_bot/graph.py").exists()
+    assert (root / "src/lg_bot/state.py").exists()
+    assert (root / "src/lg_bot/nodes.py").exists()
+    assert (root / "src/lg_bot/tools.py").exists()
     assert (root / "src/lg_bot/rag.py").exists()
     assert (root / "src/lg_bot/memory.py").exists()
-    assert (root / "src/lg_bot/tools.py").exists()
     assert (root / "mcp_servers.json").exists()
     assert (root / "data/skills/star-method.json").exists()
     _compile_tree(root)
+    # The graph uses real langgraph/langchain APIs (not just a wrapper).
+    graph = (root / "src/lg_bot/graph.py").read_text()
+    assert "StateGraph" in graph and "from langgraph.graph import" in graph
+    state = (root / "src/lg_bot/state.py").read_text()
+    assert "add_messages" in state and "TypedDict" in state
     # pyproject wires the right extras + script.
     pyproject = (root / "pyproject.toml").read_text()
     assert "agentx-kit[" in pyproject and "langgraph" in pyproject and "rag" in pyproject
@@ -72,8 +79,11 @@ def test_generate_crewai_minimal(tmp_path):
     root = result.target_dir
     assert not (root / "src/crew_bot/rag.py").exists()
     assert not (root / "src/crew_bot/memory.py").exists()
-    agents = (root / "src/crew_bot/agents.py").read_text()
-    assert "build_crewai_agent" in agents and "build_crew" in agents
+    # Real CrewAI structure: agents + tasks + crew.
+    assert "build_crewai_agent" in (root / "src/crew_bot/agents.py").read_text()
+    assert "Task" in (root / "src/crew_bot/tasks.py").read_text()
+    crew = (root / "src/crew_bot/crew.py").read_text()
+    assert "build_crew" in crew and "build_project_crew" in crew
     _compile_tree(root)
 
 

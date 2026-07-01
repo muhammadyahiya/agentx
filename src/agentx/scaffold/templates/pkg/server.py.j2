@@ -18,27 +18,18 @@ from .observability import init_observability
 
 init_observability()
 {% endif %}
+{% if spec.use_cache %}
+from agentx.cache import enable_caching
+
+enable_caching()
+{% endif %}
 {% if spec.guardrails %}
 from .guardrails import guard_input, guard_output
 {% endif %}
 {% if spec.framework == 'langgraph' %}
-from agentx.frameworks import run_agent
-from .agents import build_agents
-
-_agent_cache = None
-
-
-def _reply(message: str) -> str:
-    global _agent_cache
-    if _agent_cache is None:
-        _agent_cache = next(iter(build_agents().values()))
-    return run_agent(_agent_cache, message)
+from .graph import run_text
 {% else %}
-from .agents import build_project_crew
-
-
-def _reply(message: str) -> str:
-    return str(build_project_crew(message).kickoff())
+from .crew import run_text
 {% endif %}
 
 app = FastAPI(title="{{ spec.slug }}", version="0.1.0")
@@ -59,7 +50,7 @@ def chat(body: ChatIn) -> dict:
 {% if spec.guardrails %}
     message = guard_input(message).text
 {% endif %}
-    reply = _reply(message)
+    reply = run_text(message)
 {% if spec.guardrails %}
     reply = guard_output(reply).text
 {% endif %}
@@ -74,7 +65,7 @@ def chat_stream(message: str) -> StreamingResponse:
 {% endif %}
 
     def _events():
-        reply = _reply(message)
+        reply = run_text(message)
 {% if spec.guardrails %}
         reply = guard_output(reply).text
 {% endif %}

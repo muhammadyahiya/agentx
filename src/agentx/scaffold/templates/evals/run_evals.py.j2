@@ -17,10 +17,9 @@ from dotenv import load_dotenv
 
 from agentx import get_chat_model
 {% if spec.framework == 'langgraph' %}
-from agentx.frameworks import run_agent
-from {{ pkg }}.agents import build_agents
+from {{ pkg }}.graph import run_text
 {% else %}
-from {{ pkg }}.agents import build_project_crew
+from {{ pkg }}.crew import run_text
 {% endif %}
 
 THRESHOLD = 0.6
@@ -35,12 +34,7 @@ JUDGE_PROMPT = (
 
 
 def _agent_reply(message: str) -> str:
-{% if spec.framework == 'langgraph' %}
-    agent = next(iter(build_agents().values()))
-    return run_agent(agent, message)
-{% else %}
-    return str(build_project_crew(message).kickoff())
-{% endif %}
+    return run_text(message)
 
 
 def _score(judge, case: dict, output: str) -> float:
