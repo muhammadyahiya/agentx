@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field, field_validator
 Framework = Literal["langgraph", "crewai"]
 MemoryMode = Literal["none", "short", "long", "both"]
 PromptStyle = Literal["default", "custom"]
+VectorStoreBackend = Literal["chroma", "faiss", "memory"]
+AgentMode = Literal["chat", "autonomous", "research"]
 
 # How multiple agents are wired together (LangGraph only; CrewAI always uses sequential crew).
 #   supervisor  — an LLM router decides which worker acts next (dynamic, context-aware)
@@ -49,6 +51,9 @@ class ProjectSpec(BaseModel):
     # How agents are connected (only meaningful when len(agents) > 1 and framework == langgraph).
     orchestration: OrchestrationMode = "supervisor"
     use_rag: bool = False
+    vector_store: VectorStoreBackend = "chroma"
+    embedding_provider: str = ""     # blank → auto-detect (HF local → OpenAI → Ollama)
+    agent_mode: AgentMode = "chat"   # chat | autonomous | research
     memory: MemoryMode = "none"
     use_mcp: bool = False
     use_skills: bool = False
