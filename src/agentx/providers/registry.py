@@ -77,6 +77,36 @@ def _build_ollama(model: str | None = None, **kwargs: Any):
     return mod.ChatOllama(model=model or "llama3.2", **_common(kwargs))
 
 
+def _build_huggingface(model: str | None = None, **kwargs: Any):
+    mod = require("langchain_huggingface", "huggingface")
+    s = get_settings()
+    api_key = (
+        kwargs.pop("huggingfacehub_api_token", None)
+        or os.getenv("HF_TOKEN")
+        or os.getenv("HUGGINGFACE_API_KEY")
+        or s.hf_api_token
+    )
+    model_id = model or s.hf_default_model or "HuggingFaceH4/zephyr-7b-beta"
+    endpoint_url = kwargs.pop("endpoint_url", None) or s.hf_endpoint_url
+
+    # Separate kwargs that belong to HuggingFaceEndpoint from those for ChatHuggingFace.
+    endpoint_kwargs = _common(kwargs)
+
+    if endpoint_url:
+        llm = mod.HuggingFaceEndpoint(
+            endpoint_url=endpoint_url,
+            huggingfacehub_api_token=api_key,
+            **endpoint_kwargs,
+        )
+    else:
+        llm = mod.HuggingFaceEndpoint(
+            repo_id=model_id,
+            huggingfacehub_api_token=api_key,
+            **endpoint_kwargs,
+        )
+    return mod.ChatHuggingFace(llm=llm)
+
+
 # --------------------------------------------------------------------------- #
 # Registry
 # --------------------------------------------------------------------------- #
@@ -140,6 +170,21 @@ _register(ProviderSpec(
     id="ollama", label="Ollama (local)", extra="ollama", packages=("langchain_ollama",),
     default_model="llama3.2", env_vars=(), crewai_prefix="ollama/",
     build_chat=_build_ollama, notes="Runs locally; no API key. `ollama serve` + pull a model.",
+))
+_register(ProviderSpec(
+    id="huggingface",
+    label="HuggingFace",
+    extra="huggingface",
+    packages=("langchain_huggingface",),
+    default_model="HuggingFaceH4/zephyr-7b-beta",
+    env_vars=("HF_TOKEN",),
+    crewai_prefix="huggingface/",
+    build_chat=_build_huggingface,
+    aliases=("hf",),
+    notes=(
+        "Set HF_TOKEN for the Inference API, or HF_ENDPOINT_URL for a dedicated "
+        "Inference Endpoint. Omit both to run a local pipeline (requires GPU/CPU)."
+    ),
 ))
 
 

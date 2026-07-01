@@ -28,6 +28,35 @@ class Settings(BaseSettings):
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
     )
 
+    # HuggingFace provider settings.
+    hf_api_token: str | None = Field(
+        default=None,
+        alias="HF_TOKEN",
+        description="HuggingFace API token for Inference API access.",
+    )
+    hf_endpoint_url: str | None = Field(
+        default=None,
+        alias="HF_ENDPOINT_URL",
+        description="Custom HuggingFace Inference Endpoint URL (overrides repo_id).",
+    )
+    hf_default_model: str = Field(
+        default="",
+        alias="HF_DEFAULT_MODEL",
+        description="Default HuggingFace model repo ID.",
+    )
+
+    # Embedding provider defaults (used by RAG pipeline auto-detection).
+    default_embedding_provider: str = Field(
+        default="",
+        alias="AGENTX_EMBEDDING_PROVIDER",
+        description="Default embedding provider (huggingface, openai, cohere, …).",
+    )
+    default_embedding_model: str = Field(
+        default="",
+        alias="AGENTX_EMBEDDING_MODEL",
+        description="Default embedding model ID for the selected provider.",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

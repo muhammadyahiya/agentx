@@ -25,7 +25,22 @@ from .providers import (  # noqa: E402
     list_providers,
 )
 from .guardrails import GuardrailError, apply_guards  # noqa: E402
+from .logging_config import get_logger, setup_logging  # noqa: E402
 from .observability import get_callbacks, setup_tracing, telemetry_enabled  # noqa: E402
+from .rag import (  # noqa: E402
+    AnyEmbeddingConfig,
+    AzureOpenAIEmbeddingConfig,
+    BedrockEmbeddingConfig,
+    CohereEmbeddingConfig,
+    EmbeddingConfig,
+    GoogleEmbeddingConfig,
+    HuggingFaceEmbeddingConfig,
+    OllamaEmbeddingConfig,
+    OpenAIEmbeddingConfig,
+    VoyageEmbeddingConfig,
+    auto_embeddings,
+    get_embeddings,
+)
 from .reliability import (  # noqa: E402
     UsageLimitExceeded,
     UsageLimits,
@@ -48,6 +63,22 @@ __all__ = [
     "get_chat_model",
     "get_crewai_llm",
     "list_providers",
+    # logging
+    "setup_logging",
+    "get_logger",
+    # embeddings
+    "get_embeddings",
+    "auto_embeddings",
+    "EmbeddingConfig",
+    "AnyEmbeddingConfig",
+    "HuggingFaceEmbeddingConfig",
+    "OpenAIEmbeddingConfig",
+    "AzureOpenAIEmbeddingConfig",
+    "CohereEmbeddingConfig",
+    "GoogleEmbeddingConfig",
+    "BedrockEmbeddingConfig",
+    "VoyageEmbeddingConfig",
+    "OllamaEmbeddingConfig",
     # enterprise runtime
     "setup_tracing",
     "get_callbacks",
