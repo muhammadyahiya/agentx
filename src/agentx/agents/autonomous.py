@@ -17,22 +17,42 @@ Usage::
     )
     result = agent.run()
     print(result.summary)
+
+Security notes
+--------------
+* ``read_file`` / ``write_file`` are sandboxed to the workspace directory via
+  ``Path.resolve().is_relative_to(workspace)`` — attempts to escape (``../``,
+  absolute paths, symlinks) raise a ``ToolCallError`` back to the model.
+* ``run_shell`` is disabled by default and must be enabled with
+  ``allow_shell=True``.  Even when enabled it uses ``shlex.split`` +
+  ``shell=False`` to prevent shell metacharacter injection, and rejects
+  commands listed in ``_SHELL_DENYLIST``.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
+import shlex
 import subprocess
 import textwrap
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Shell denylist — programs an LLM should never invoke autonomously.
+# ──────────────────────────────────────────────────────────────────────────────
+
+_SHELL_DENYLIST = frozenset({
+    "rm", "shutdown", "reboot", "halt", "poweroff", "mkfs", "dd", "fdisk",
+    "wget", "curl", "nc", "netcat", "ssh", "scp", "sudo", "su", "chmod",
+    "chown", "sh", "bash", "zsh", "python", "python3", "eval", "exec",
+})
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -42,20 +62,28 @@ logger = logging.getLogger(__name__)
 class AutonomousAgentConfig(BaseModel):
     """Configuration for an AutonomousAgent."""
 
+    goal: str = Field(..., min_length=1, description="High-level goal the agent should accomplish.")
     provider: str = "openai"
     model: str = ""
-    goal: str = Field(..., description="High-level goal the agent should accomplish.")
     workspace: str = "./workspace"
-    max_iterations: int = Field(default=20, description="Hard cap on plan-act-observe loops.")
-    max_web_results: int = 5
+    max_iterations: int = Field(default=20, ge=1, description="Hard cap on plan-act-observe loops.")
+    max_web_results: int = Field(default=5, ge=1, le=25)
     allow_shell: bool = Field(
         default=False,
         description="Allow the agent to run shell commands (sandboxed to workspace).",
     )
-    temperature: float = 0.2
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     verbose: bool = True
 
     model_config = {"extra": "allow"}
+
+    @field_validator("goal")
+    @classmethod
+    def _strip_goal(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("goal must not be empty or whitespace-only")
+        return stripped
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -73,12 +101,42 @@ class AgentResult:
 
     def __str__(self) -> str:
         status = "✓" if self.success else "✗"
-        return (
-            f"{status} Goal: {self.goal}\n"
-            f"  Iterations: {self.iterations}\n"
-            f"  Artifacts: {[str(a) for a in self.artifacts]}\n"
-            f"  Summary: {self.summary[:300]}"
-        )
+        parts = [
+            f"{status} Goal: {self.goal}",
+            f"  Iterations: {self.iterations}",
+            f"  Artifacts: {[str(a) for a in self.artifacts]}",
+        ]
+        if not self.success and self.error:
+            parts.append(f"  Error: {self.error}")
+        parts.append(f"  Summary: {self.summary[:300]}")
+        return "\n".join(parts)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Path sandbox helper
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _safe_join(workspace: Path, filename: str) -> Path:
+    """Resolve ``filename`` under ``workspace`` and reject escape attempts.
+
+    Returns a path guaranteed to be inside ``workspace``.  Raises ValueError
+    otherwise so the LLM sees the error and can retry.
+    """
+    if not filename or not filename.strip():
+        raise ValueError("filename must not be empty")
+    # Reject absolute paths outright.
+    candidate = Path(filename)
+    if candidate.is_absolute():
+        raise ValueError(f"absolute paths are not allowed: {filename!r}")
+    resolved = (workspace / candidate).resolve()
+    ws_resolved = workspace.resolve()
+    try:
+        resolved.relative_to(ws_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"path escapes workspace: {filename!r} → {resolved} not under {ws_resolved}"
+        ) from exc
+    return resolved
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -88,46 +146,42 @@ class AgentResult:
 def _make_tools(workspace: Path, cfg: AutonomousAgentConfig) -> list:
     """Build the agent's tool set as LangChain tools."""
     from langchain_core.tools import tool
+    from ..tools.builtin import fetch_url as _fetch_url
 
     ws = workspace
 
     @tool
     def web_search(query: str, max_results: int = 5) -> str:
         """Search the web for up-to-date information. Returns titles + snippets + URLs."""
-        from agentx.tools.builtin import web_search as _search
+        from ..tools.builtin import web_search as _search
         return _search(query, max_results=min(max_results, cfg.max_web_results))
 
     @tool
     def fetch_url(url: str) -> str:
         """Fetch and return the plain-text content of a URL (max 8000 chars)."""
-        try:
-            import urllib.request
-            req = urllib.request.Request(url, headers={"User-Agent": "agentx-bot/1.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                raw = resp.read(65536).decode("utf-8", errors="replace")
-            # Strip HTML tags
-            import re
-            text = re.sub(r"<[^>]+>", " ", raw)
-            text = re.sub(r"\s{2,}", " ", text).strip()
-            return text[:8000]
-        except Exception as exc:
-            return f"Failed to fetch {url}: {exc}"
+        return _fetch_url(url, max_chars=8000)
 
     @tool
     def read_file(filename: str) -> str:
-        """Read a file from the workspace directory. filename is relative to workspace."""
-        fp = ws / filename
+        """Read a file from the workspace directory (paths must stay inside workspace)."""
+        try:
+            fp = _safe_join(ws, filename)
+        except ValueError as exc:
+            return f"Access denied: {exc}"
         if not fp.exists():
             return f"File not found: {filename}"
         try:
             return fp.read_text(encoding="utf-8")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"Error reading {filename}: {exc}"
 
     @tool
     def write_file(filename: str, content: str) -> str:
-        """Write content to a file in the workspace directory."""
-        fp = ws / filename
+        """Write content to a file in the workspace directory (paths must stay inside workspace)."""
+        try:
+            fp = _safe_join(ws, filename)
+        except ValueError as exc:
+            return f"Access denied: {exc}"
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(content, encoding="utf-8")
         logger.info("Agent wrote file: %s (%d chars)", fp, len(content))
@@ -136,7 +190,10 @@ def _make_tools(workspace: Path, cfg: AutonomousAgentConfig) -> list:
     @tool
     def list_files(subdirectory: str = "") -> str:
         """List files in the workspace (or a subdirectory of it)."""
-        target = ws / subdirectory if subdirectory else ws
+        try:
+            target = _safe_join(ws, subdirectory) if subdirectory else ws
+        except ValueError as exc:
+            return f"Access denied: {exc}"
         if not target.exists():
             return f"Directory not found: {subdirectory or 'workspace'}"
         files = [str(p.relative_to(ws)) for p in target.rglob("*") if p.is_file()]
@@ -153,18 +210,38 @@ def _make_tools(workspace: Path, cfg: AutonomousAgentConfig) -> list:
     if cfg.allow_shell:
         @tool
         def run_shell(command: str) -> str:
-            """Run a shell command inside the workspace directory (DANGEROUS — only when authorized)."""
+            """Run a shell command inside the workspace directory.
+
+            Uses shlex-split arguments with shell=False — no shell metacharacter
+            expansion. A denylist of dangerous programs (rm, sudo, curl, …) is
+            enforced.  Timeout: 30s.
+            """
+            try:
+                argv = shlex.split(command)
+            except ValueError as exc:
+                return f"Could not parse command: {exc}"
+            if not argv:
+                return "Empty command."
+            program = Path(argv[0]).name
+            if program in _SHELL_DENYLIST:
+                return f"Denied: program {program!r} is on the shell denylist."
             try:
                 result = subprocess.run(
-                    command, shell=True, cwd=str(ws),
-                    capture_output=True, text=True, timeout=30,
+                    argv,
+                    cwd=str(ws),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    shell=False,
                 )
                 out = result.stdout[-4000:] if result.stdout else ""
                 err = result.stderr[-2000:] if result.stderr else ""
                 return f"stdout:\n{out}\nstderr:\n{err}\nreturncode: {result.returncode}"
             except subprocess.TimeoutExpired:
                 return "Command timed out (30s limit)."
-            except Exception as exc:
+            except FileNotFoundError:
+                return f"Program not found: {program!r}"
+            except Exception as exc:  # noqa: BLE001
                 return f"Shell error: {exc}"
 
         tools.append(run_shell)
@@ -193,6 +270,37 @@ _SYSTEM_TEMPLATE = textwrap.dedent("""\
     Be thorough but efficient. Avoid repeating the same search queries.
     The user cannot give you additional input — work autonomously.
 """)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Async loop helper
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _run_sync(coro):
+    """Run a coroutine synchronously, tolerating a running event loop.
+
+    Direct ``asyncio.new_event_loop().run_until_complete`` fails inside FastAPI,
+    Jupyter, Streamlit, etc.  This helper detects an active loop and either uses
+    ``nest_asyncio`` (if installed) or raises a clear error asking the caller
+    to use the async entry point.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        return asyncio.run(coro)
+    # A loop is already running — cannot call run_until_complete cleanly.
+    try:
+        import nest_asyncio  # type: ignore
+        nest_asyncio.apply(loop)
+        return loop.run_until_complete(coro)
+    except ImportError as exc:
+        raise RuntimeError(
+            "An event loop is already running (e.g. inside FastAPI/Jupyter/Streamlit). "
+            "Use the async entry point (`await agent.arun()`) or install nest_asyncio "
+            "and rerun."
+        ) from exc
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -234,16 +342,16 @@ class AutonomousAgent:
     # ── Run ──────────────────────────────────────────────────────────────────
 
     def run(self) -> AgentResult:
-        """Run the agent synchronously until the goal is reached or max_iterations hit."""
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(self.arun())
-        finally:
-            loop.close()
+        """Run the agent synchronously until the goal is reached or max_iterations hit.
+
+        Safe to call from FastAPI/Jupyter/Streamlit — falls back to nest_asyncio
+        when a loop is already active, or raises a clear error otherwise.
+        """
+        return _run_sync(self.arun())
 
     async def arun(self) -> AgentResult:
         """Async run — use this from an async context."""
-        from agentx.providers import get_chat_model
+        from ..providers import get_chat_model
 
         cfg = self.config
         llm = get_chat_model(cfg.provider, cfg.model or None, temperature=cfg.temperature)
@@ -257,11 +365,14 @@ class AutonomousAgent:
         try:
             from langgraph.prebuilt import create_react_agent  # type: ignore
             from langgraph.checkpoint.memory import MemorySaver  # type: ignore
-            from langchain_core.messages import HumanMessage, SystemMessage  # type: ignore
+            from langchain_core.messages import HumanMessage  # type: ignore
 
             agent = create_react_agent(llm, tools, prompt=system, checkpointer=MemorySaver())
 
-            logger.info("AutonomousAgent starting: goal=%r iterations_cap=%d", cfg.goal[:80], cfg.max_iterations)
+            logger.info(
+                "AutonomousAgent starting: goal=%r iterations_cap=%d",
+                cfg.goal[:80], cfg.max_iterations,
+            )
 
             result = await agent.ainvoke(
                 {"messages": [HumanMessage(content=cfg.goal)]},
@@ -277,8 +388,7 @@ class AutonomousAgent:
                     break
 
             # Collect artifacts written during the run
-            self._artifacts = list(self.workspace.rglob("*"))
-            self._artifacts = [f for f in self._artifacts if f.is_file()]
+            self._artifacts = [f for f in self.workspace.rglob("*") if f.is_file()]
 
             summary = final_content
             if "FINAL ANSWER:" in final_content:

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..config import get_settings
 
@@ -30,10 +30,19 @@ VectorStore = Literal["faiss", "chroma", "memory"]
 # ──────────────────────────────────────────────────────────────────────────────
 
 class RAGConfig(BaseModel):
-    """Configuration for the RAG pipeline build step."""
+    """Configuration for the RAG pipeline build step.
 
-    chunk_size: int = Field(default=800, description="Token/character target per chunk")
-    chunk_overlap: int = Field(default=120, description="Overlap between adjacent chunks")
+    Invariants (enforced at construction time):
+      chunk_size > 0
+      0 <= chunk_overlap < chunk_size
+    """
+
+    chunk_size: int = Field(
+        default=800, gt=0, description="Token/character target per chunk (> 0).",
+    )
+    chunk_overlap: int = Field(
+        default=120, ge=0, description="Overlap between adjacent chunks (>= 0, < chunk_size).",
+    )
     vector_store: VectorStore = Field(
         default="chroma",
         description="Vector store backend: 'faiss', 'chroma', or 'memory' (keyword fallback)",
@@ -45,6 +54,15 @@ class RAGConfig(BaseModel):
     collection_name: str = Field(default="agentx", description="Chroma collection name")
 
     model_config = {"extra": "allow"}
+
+    @model_validator(mode="after")
+    def _check_overlap_lt_chunk_size(self) -> "RAGConfig":
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError(
+                f"chunk_overlap ({self.chunk_overlap}) must be < chunk_size ({self.chunk_size}); "
+                "otherwise chunking cannot make progress."
+            )
+        return self
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -61,7 +79,19 @@ def chunk_texts(
     Falls back to a simple character splitter when ``langchain-text-splitters``
     is not installed — but the LangChain version is strongly preferred because it
     respects sentence and paragraph boundaries.
+
+    Raises:
+        ValueError: if chunk_size <= 0 or chunk_overlap < 0 or chunk_overlap >= chunk_size.
     """
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be > 0 (got {chunk_size})")
+    if chunk_overlap < 0:
+        raise ValueError(f"chunk_overlap must be >= 0 (got {chunk_overlap})")
+    if chunk_overlap >= chunk_size:
+        raise ValueError(
+            f"chunk_overlap ({chunk_overlap}) must be < chunk_size ({chunk_size})"
+        )
+
     try:
         from langchain_text_splitters import RecursiveCharacterTextSplitter  # type: ignore
 
@@ -85,8 +115,10 @@ def chunk_texts(
             "Install 'agentx-kit[rag]' for better chunking."
         )
 
-    # Fallback: simple fixed-size chunker
-    all_chunks = []
+    # Fallback: simple fixed-size chunker.  Step is guaranteed > 0 because we
+    # validated chunk_overlap < chunk_size above.
+    step = chunk_size - chunk_overlap
+    all_chunks: list[str] = []
     for text in texts:
         start = 0
         while start < len(text):
@@ -94,7 +126,7 @@ def chunk_texts(
             chunk = text[start:end].strip()
             if chunk:
                 all_chunks.append(chunk)
-            start += chunk_size - chunk_overlap
+            start += step
     logger.debug(
         "Chunked %d text(s) → %d chunks (simple fallback)", len(texts), len(all_chunks)
     )
@@ -130,7 +162,21 @@ class RagIndex:
     _store_type: str = "memory"
 
     def search(self, query: str, k: int = 4) -> list[str]:
-        """Return the top-k most relevant chunks for ``query``."""
+        """Return the top-k most relevant chunks for ``query``.
+
+        Args:
+            query: Free-text query.  Whitespace-only queries return [].
+            k: Max number of chunks to return. Values < 1 return [].
+
+        The vector store is used when available; on failure or when unavailable,
+        falls back to token-frequency keyword scoring.  When no query token
+        matches any chunk, an empty list is returned (previously the first N
+        chunks were returned regardless of relevance).
+        """
+        if k < 1:
+            return []
+        if not query or not query.strip():
+            return []
         if self._store is not None:
             try:
                 docs = self._store.similarity_search(query, k=k)
@@ -144,10 +190,16 @@ class RagIndex:
         if not self.chunks:
             return []
         q = Counter(_tokens(query))
+        if not q:
+            return []
         scored = [(sum(_tokens(c).count(t) for t in q), c) for c in self.chunks]
         scored.sort(key=lambda x: x[0], reverse=True)
         top = [c for s, c in scored if s > 0][:k]
-        return top or self.chunks[:k]
+        if not top:
+            logger.debug(
+                "Keyword search: no tokens from %r matched any chunk (k=%d)", query, k
+            )
+        return top
 
     def context(self, query: str, k: int = 4) -> str:
         """Return search results joined for injection into a prompt."""
@@ -166,7 +218,14 @@ class RagIndex:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _build_faiss(chunks: list[str], embeddings, persist_dir: str | None) -> object | None:
-    """Build (or load) a FAISS index."""
+    """Build (or load) a FAISS index.
+
+    SECURITY NOTE: Loading a persisted FAISS index invokes pickle deserialization,
+    which can execute arbitrary code if the on-disk file is untrusted.  We gate
+    this behind ``AGENTX_FAISS_ALLOW_DANGEROUS_LOAD=1`` and emit a WARNING log
+    every time the flag is honoured.  If the flag is false (default), a stale
+    index on disk is rebuilt from scratch instead of loaded.
+    """
     try:
         from langchain_community.vectorstores import FAISS  # type: ignore
     except ImportError:
@@ -177,16 +236,30 @@ def _build_faiss(chunks: list[str], embeddings, persist_dir: str | None) -> obje
 
     pdir = Path(persist_dir) if persist_dir else None
 
-    # Load from disk if index already exists
+    # Load from disk if index already exists (only if user opted in).
     if pdir and (pdir / "index.faiss").exists():
-        try:
-            store = FAISS.load_local(
-                str(pdir), embeddings, allow_dangerous_deserialization=True
+        allow_load = get_settings().faiss_allow_dangerous_load
+        if not allow_load:
+            logger.warning(
+                "Refusing to load FAISS index from %s — pickle deserialization "
+                "is disabled by default. Set AGENTX_FAISS_ALLOW_DANGEROUS_LOAD=1 "
+                "if you trust the source of this index. Rebuilding from scratch.",
+                pdir,
             )
-            logger.info("Loaded FAISS index from %s (%d chunks)", pdir, len(chunks))
-            return store
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to load existing FAISS index: %s — rebuilding.", exc)
+        else:
+            logger.warning(
+                "Loading FAISS index from %s with pickle deserialization enabled "
+                "(AGENTX_FAISS_ALLOW_DANGEROUS_LOAD=1). Trust the source of this file!",
+                pdir,
+            )
+            try:
+                store = FAISS.load_local(
+                    str(pdir), embeddings, allow_dangerous_deserialization=True
+                )
+                logger.info("Loaded FAISS index from %s (%d chunks)", pdir, len(chunks))
+                return store
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to load existing FAISS index: %s — rebuilding.", exc)
 
     store = FAISS.from_texts(chunks, embedding=embeddings)
     if pdir:
@@ -266,11 +339,11 @@ def build_index_from_texts(
     """
     cfg = config or RAGConfig()
 
-    # Keyword overrides
-    _chunk_size = chunk_size or cfg.chunk_size
-    _chunk_overlap = chunk_overlap or cfg.chunk_overlap
-    _vector_store = vector_store or cfg.vector_store
-    _persist_dir = persist_dir or cfg.persist_dir
+    # Keyword overrides — use ``is None`` to allow explicit 0/empty values.
+    _chunk_size = chunk_size if chunk_size is not None else cfg.chunk_size
+    _chunk_overlap = chunk_overlap if chunk_overlap is not None else cfg.chunk_overlap
+    _vector_store = vector_store if vector_store is not None else cfg.vector_store
+    _persist_dir = persist_dir if persist_dir is not None else cfg.persist_dir
 
     # 1. Chunk
     chunks = chunk_texts(texts, chunk_size=_chunk_size, chunk_overlap=_chunk_overlap)
@@ -379,42 +452,19 @@ def build_index_from_directory(
 
 def _settings_embedding_config():
     """Read AGENTX_EMBEDDING_PROVIDER / AGENTX_EMBEDDING_MODEL from settings."""
-    from .embeddings import (
-        AzureOpenAIEmbeddingConfig,
-        BedrockEmbeddingConfig,
-        CohereEmbeddingConfig,
-        GoogleEmbeddingConfig,
-        HuggingFaceEmbeddingConfig,
-        OllamaEmbeddingConfig,
-        OpenAIEmbeddingConfig,
-        VoyageEmbeddingConfig,
-    )
+    from .embeddings import embedding_config_from_name
 
     s = get_settings()
     provider = s.default_embedding_provider.strip().lower()
     model = s.default_embedding_model.strip() or None
 
-    _MAP = {
-        "huggingface": HuggingFaceEmbeddingConfig,
-        "hf": HuggingFaceEmbeddingConfig,
-        "openai": OpenAIEmbeddingConfig,
-        "azure": AzureOpenAIEmbeddingConfig,
-        "cohere": CohereEmbeddingConfig,
-        "google": GoogleEmbeddingConfig,
-        "bedrock": BedrockEmbeddingConfig,
-        "aws": BedrockEmbeddingConfig,
-        "voyage": VoyageEmbeddingConfig,
-        "ollama": OllamaEmbeddingConfig,
-    }
-
-    cls = _MAP.get(provider)
-    if cls is None:
-        return None
-    kwargs = {}
-    if model:
-        kwargs["model"] = model
-    logger.debug("Settings embedding: provider=%s model=%s", provider, model or "(default)")
-    return cls(**kwargs)
+    cfg = embedding_config_from_name(provider, model=model)
+    if cfg is not None:
+        logger.debug(
+            "Settings embedding: provider=%s model=%s",
+            provider, model or "(default)",
+        )
+    return cfg
 
 
 # ──────────────────────────────────────────────────────────────────────────────

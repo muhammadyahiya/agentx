@@ -42,8 +42,14 @@ class AgentSpec(BaseModel):
         return to_snake(v)
 
 
+_KNOWN_EMBEDDING_PROVIDERS = frozenset({
+    "", "huggingface", "hf", "openai", "azure", "cohere",
+    "google", "bedrock", "aws", "voyage", "ollama",
+})
+
+
 class ProjectSpec(BaseModel):
-    name: str = Field(..., description="Project name (directory + package base).")
+    name: str = Field(..., min_length=1, description="Project name (directory + package base).")
     framework: Framework = "langgraph"
     provider: str = "openai"
     model: str = ""                       # blank → provider default
@@ -101,3 +107,22 @@ class ProjectSpec(BaseModel):
     @property
     def multi_agent(self) -> bool:
         return len(self.agents) > 1
+
+    @field_validator("embedding_provider")
+    @classmethod
+    def _validate_embedding_provider(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in _KNOWN_EMBEDDING_PROVIDERS:
+            raise ValueError(
+                f"embedding_provider must be one of {sorted(_KNOWN_EMBEDDING_PROVIDERS - {''})} "
+                f"or '' for auto-detect (got {v!r})"
+            )
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be empty or whitespace-only")
+        return v

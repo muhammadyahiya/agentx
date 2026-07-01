@@ -21,14 +21,15 @@ Usage::
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from .autonomous import _run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ _DEPTH_PARAMS: dict[ResearchDepth, dict] = {
 class ResearchAgentConfig(BaseModel):
     """Configuration for a ResearchAgent."""
 
-    topic: str = Field(..., description="Research question or topic.")
+    topic: str = Field(..., min_length=1, description="Research question or topic.")
     provider: str = "openai"
     model: str = ""
     depth: ResearchDepth = "standard"
@@ -56,11 +57,19 @@ class ResearchAgentConfig(BaseModel):
         default=None,
         description="Write the final report to this path. None = return only.",
     )
-    temperature: float = 0.1
+    temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     include_citations: bool = True
     report_format: Literal["markdown", "plain"] = "markdown"
 
     model_config = {"extra": "allow"}
+
+    @field_validator("topic")
+    @classmethod
+    def _strip_topic(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("topic must not be empty or whitespace-only")
+        return stripped
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -81,8 +90,11 @@ class ResearchResult:
         return self.markdown
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(self.markdown, encoding="utf-8")
-        logger.info("Research report saved to %s", path)
+        """Write the report to ``path`` (creating parent dirs as needed)."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(self.markdown, encoding="utf-8")
+        logger.info("Research report saved to %s", p)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -115,9 +127,15 @@ _RESEARCH_SYSTEM = textwrap.dedent("""\
 """)
 
 
-def _make_research_tools(cfg: ResearchAgentConfig) -> list:
-    """Build research-specific tools."""
+def _make_research_tools(cfg: ResearchAgentConfig) -> tuple[list, list[str]]:
+    """Build research-specific tools and return them alongside the citations list.
+
+    Returns:
+        ``(tools, citations)`` — ``citations`` is the same list the fetch_url
+        tool appends to, so callers can read it after the agent finishes.
+    """
     from langchain_core.tools import tool
+    from ..tools.builtin import fetch_url as _fetch_url
 
     params = _DEPTH_PARAMS[cfg.depth]
     _query_count = [0]
@@ -129,7 +147,7 @@ def _make_research_tools(cfg: ResearchAgentConfig) -> list:
         """Search the web. Use precise, specific queries for best results."""
         if _query_count[0] >= params["max_queries"]:
             return "Search limit reached. Synthesise from gathered information."
-        from agentx.tools.builtin import web_search as _search
+        from ..tools.builtin import web_search as _search
         _query_count[0] += 1
         logger.info("Research search #%d: %r", _query_count[0], query[:80])
         return _search(query, max_results=5)
@@ -143,16 +161,7 @@ def _make_research_tools(cfg: ResearchAgentConfig) -> list:
         if url not in _citations:
             _citations.append(url)
         logger.info("Research fetch #%d: %s", _url_count[0], url)
-        try:
-            import urllib.request, re
-            req = urllib.request.Request(url, headers={"User-Agent": "agentx-research/1.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                raw = resp.read(65536).decode("utf-8", errors="replace")
-            text = re.sub(r"<[^>]+>", " ", raw)
-            text = re.sub(r"\s{2,}", " ", text).strip()
-            return text[:10000]
-        except Exception as exc:
-            return f"Failed to fetch {url}: {exc}"
+        return _fetch_url(url, max_chars=10000)
 
     @tool
     def think(reasoning: str) -> str:
@@ -189,16 +198,16 @@ class ResearchAgent:
         ))
 
     def run(self) -> ResearchResult:
-        """Run the research agent synchronously."""
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(self.arun())
-        finally:
-            loop.close()
+        """Run the research agent synchronously.
+
+        Safe to call from FastAPI/Jupyter/Streamlit — see ``_run_sync`` in
+        ``autonomous.py``.
+        """
+        return _run_sync(self.arun())
 
     async def arun(self) -> ResearchResult:
         """Async run — use from an async context."""
-        from agentx.providers import get_chat_model
+        from ..providers import get_chat_model
 
         cfg = self.config
         params = _DEPTH_PARAMS[cfg.depth]

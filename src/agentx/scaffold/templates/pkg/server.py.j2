@@ -7,8 +7,6 @@ Endpoints:
     GET  /health              — liveness probe
     POST /chat                — single-turn chat, returns JSON {reply, session_id}
     GET  /chat/stream         — SSE stream: ?message=...&session_id=...
-    GET  /sessions/{id}       — retrieve session history
-    DELETE /sessions/{id}     — clear a session
 """
 from __future__ import annotations
 

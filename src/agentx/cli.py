@@ -337,18 +337,25 @@ rag_app = typer.Typer(help="Manage the RAG knowledge base (upload docs, rebuild 
 app.add_typer(rag_app, name="rag")
 
 
-def _find_knowledge_dir(project: Path | None) -> Path:
-    """Resolve the knowledge/ directory for a generated agentx project."""
+def _find_knowledge_dir(project: Path | None, *, create: bool = False) -> Path:
+    """Resolve the knowledge/ directory for a generated agentx project.
+
+    Args:
+        project: Project root override (defaults to a walk-up search from cwd).
+        create: When True, create the directory if missing.  Read-only commands
+            (list/build) pass False so they don't leave empty ``knowledge/``
+            folders behind.
+    """
     base = project or Path.cwd()
-    # Walk up looking for agentx.json (project root marker)
     for parent in [base, *base.parents]:
         if (parent / "agentx.json").exists():
             kdir = parent / "knowledge"
-            kdir.mkdir(parents=True, exist_ok=True)
+            if create:
+                kdir.mkdir(parents=True, exist_ok=True)
             return kdir
-    # Fallback: knowledge/ in cwd
     kdir = base / "knowledge"
-    kdir.mkdir(parents=True, exist_ok=True)
+    if create:
+        kdir.mkdir(parents=True, exist_ok=True)
     return kdir
 
 
@@ -378,8 +385,9 @@ def rag_upload(
     import shutil
 
     from .rag import RAGConfig, build_index_from_directory
+    from .rag.embeddings import embedding_config_from_name
 
-    kdir = _find_knowledge_dir(project)
+    kdir = _find_knowledge_dir(project, create=True)
     console.print(f"[cyan]Knowledge directory:[/] {kdir}")
 
     # Copy files
@@ -412,9 +420,9 @@ def rag_upload(
         try:
             manifest = _json.loads(manifest_path.read_text())
             if not vs:
-                vs = manifest.get("features", {}).get("vector_store", "chroma")
+                vs = manifest.get("features", {}).get("vector_store") or "chroma"
             if not ep:
-                ep = manifest.get("features", {}).get("embedding_provider", "")
+                ep = manifest.get("features", {}).get("embedding_provider") or ""
         except Exception:  # noqa: BLE001
             pass
     vs = vs or "chroma"
@@ -423,30 +431,7 @@ def rag_upload(
     console.print(f"\n[cyan]Rebuilding index:[/] vector_store={vs} embedding={ep or 'auto'} …")
 
     try:
-        from .rag import get_embeddings
-        emb_cfg = None
-        if ep:
-            from .rag.embeddings import (
-                AzureOpenAIEmbeddingConfig, BedrockEmbeddingConfig,
-                CohereEmbeddingConfig, GoogleEmbeddingConfig,
-                HuggingFaceEmbeddingConfig, OllamaEmbeddingConfig,
-                OpenAIEmbeddingConfig, VoyageEmbeddingConfig,
-            )
-            _EMAP = {
-                "huggingface": HuggingFaceEmbeddingConfig,
-                "hf": HuggingFaceEmbeddingConfig,
-                "openai": OpenAIEmbeddingConfig,
-                "azure": AzureOpenAIEmbeddingConfig,
-                "cohere": CohereEmbeddingConfig,
-                "google": GoogleEmbeddingConfig,
-                "bedrock": BedrockEmbeddingConfig,
-                "ollama": OllamaEmbeddingConfig,
-                "voyage": VoyageEmbeddingConfig,
-            }
-            cls = _EMAP.get(ep.lower())
-            if cls:
-                emb_cfg = cls()
-
+        emb_cfg = embedding_config_from_name(ep) if ep else None
         cfg = RAGConfig(vector_store=vs, persist_dir=persist)
         index = build_index_from_directory(kdir, config=cfg, embedding_config=emb_cfg)
         console.print(
@@ -468,8 +453,27 @@ def rag_build(
     import json as _json
 
     from .rag import RAGConfig, build_index_from_directory
+    from .rag.embeddings import embedding_config_from_name
 
-    kdir = _find_knowledge_dir(project)
+    kdir = _find_knowledge_dir(project, create=False)
+    if not kdir.exists():
+        console.print(
+            f"[red]No knowledge/ directory found[/] (looked in {kdir}). "
+            "Run `agentx rag upload <file>` first."
+        )
+        raise typer.Exit(2)
+
+    docs = [
+        f for f in kdir.rglob("*")
+        if f.is_file() and f.name != "README.md" and not f.name.startswith(".")
+    ]
+    if not docs:
+        console.print(
+            f"[yellow]No documents found in {kdir}.[/] "
+            "Use `agentx rag upload <file>` to add PDF, Excel, CSV, Word, TXT, or MD files."
+        )
+        raise typer.Exit(2)
+
     proj_root = kdir.parent
     manifest_path = proj_root / "agentx.json"
 
@@ -479,40 +483,27 @@ def rag_build(
         try:
             manifest = _json.loads(manifest_path.read_text())
             if not vs:
-                vs = manifest.get("features", {}).get("vector_store", "chroma")
+                vs = manifest.get("features", {}).get("vector_store") or "chroma"
             if not ep:
-                ep = manifest.get("features", {}).get("embedding_provider", "")
+                ep = manifest.get("features", {}).get("embedding_provider") or ""
         except Exception:  # noqa: BLE001
             pass
     vs = vs or "chroma"
     persist = str(proj_root / f".{vs}")
 
-    console.print(f"[cyan]Building RAG index:[/] store={vs} embedding={ep or 'auto'} …")
+    console.print(f"[cyan]Building RAG index:[/] store={vs} embedding={ep or 'auto'} docs={len(docs)} …")
     try:
-        emb_cfg = None
-        if ep:
-            from .rag.embeddings import (
-                AzureOpenAIEmbeddingConfig, BedrockEmbeddingConfig,
-                CohereEmbeddingConfig, GoogleEmbeddingConfig,
-                HuggingFaceEmbeddingConfig, OllamaEmbeddingConfig,
-                OpenAIEmbeddingConfig, VoyageEmbeddingConfig,
-            )
-            _EMAP = {
-                "huggingface": HuggingFaceEmbeddingConfig, "hf": HuggingFaceEmbeddingConfig,
-                "openai": OpenAIEmbeddingConfig, "azure": AzureOpenAIEmbeddingConfig,
-                "cohere": CohereEmbeddingConfig, "google": GoogleEmbeddingConfig,
-                "bedrock": BedrockEmbeddingConfig, "ollama": OllamaEmbeddingConfig,
-                "voyage": VoyageEmbeddingConfig,
-            }
-            cls = _EMAP.get(ep.lower())
-            if cls:
-                emb_cfg = cls()
-
+        emb_cfg = embedding_config_from_name(ep) if ep else None
         cfg = RAGConfig(vector_store=vs, persist_dir=persist)
         index = build_index_from_directory(kdir, config=cfg, embedding_config=emb_cfg)
+        if len(index) == 0:
+            console.print("[red]Index built but empty — no chunks were produced from your documents.[/]")
+            raise typer.Exit(3)
         console.print(
             f"[green]✓[/] {len(index)} chunks indexed in {index.store_type} → {persist}"
         )
+    except typer.Exit:
+        raise
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Build failed: {exc}[/]")
         raise typer.Exit(1) from exc
@@ -523,7 +514,13 @@ def rag_list(
     project: Path = typer.Option(None, "--project", "-p", help="Project root."),
 ) -> None:
     """List documents in the knowledge base."""
-    kdir = _find_knowledge_dir(project)
+    kdir = _find_knowledge_dir(project, create=False)
+    if not kdir.exists():
+        console.print(
+            f"[yellow]No knowledge/ directory found[/] (looked in {kdir}). "
+            "Use `agentx rag upload <file>` to add documents."
+        )
+        return
     files = [f for f in kdir.rglob("*") if f.is_file() and f.name != "README.md"]
     if not files:
         console.print("[yellow]knowledge/ is empty. Use `agentx rag upload <file>` to add documents.[/]")
